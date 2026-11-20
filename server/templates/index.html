@@ -1,0 +1,178 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ARINC 429 - Instrumentos y Envíos</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1000px; margin: 24px auto; padding: 0 16px; background: #f5f7fa; }
+    h1, h2 { color: #1b2a4a; }
+    .card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+    input, select, button { padding: 8px 10px; border-radius: 5px; border: 1px solid #cbd5e1; }
+    button { background: #1d4ed8; color: #fff; border: none; cursor: pointer; }
+    button.secondary { background: #475569; }
+    button.danger { background: #dc2626; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+    th, td { border-bottom: 1px solid #e2e8f0; padding: 8px; text-align: left; }
+    code { background: #eef2ff; padding: 2px 6px; border-radius: 4px; }
+    .msg-err { color: #b91c1c; font-weight: bold; }
+    .msg-ok { color: #15803d; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Sistema ARINC 429 — Instrumentos y Envíos</h1>
+
+  <div class="card">
+    <h2>1. CRUD de Instrumentos Aeronáuticos</h2>
+    <div class="row">
+      <input id="inst-id" type="hidden" />
+      <input id="inst-nombre" type="text" placeholder="Nombre (ej. Altímetro)" />
+      <input id="inst-min" type="number" step="any" placeholder="Mínimo" />
+      <input id="inst-max" type="number" step="any" placeholder="Máximo" />
+      <input id="inst-label" type="text" placeholder="Label octal (ej. 204)" value="203" style="width:130px" />
+      <button onclick="guardarInstrumento()">Guardar</button>
+      <button class="secondary" onclick="limpiarFormInst()">Limpiar</button>
+    </div>
+    <div id="inst-msg"></div>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Nombre</th><th>Mínimo</th><th>Máximo</th><th>Label (oct)</th><th>Acciones</th></tr>
+      </thead>
+      <tbody id="tabla-inst"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>2. CRUD de Envíos (ARINC 429 32-bit + Serial + Auricular)</h2>
+    <div class="row">
+      <select id="envio-inst"></select>
+      <input id="envio-valor" type="number" step="any" placeholder="Valor a enviar" />
+      <input id="envio-puerto" type="text" value="SIMULADO" placeholder="Puerto (ej. COM3 o /dev/ttyUSB0)" />
+      <input id="envio-baud" type="number" value="9600" style="width:95px" />
+      <label><input id="envio-audio" type="checkbox" checked /> Salida auricular</label>
+      <button onclick="crearEnvio()">Enviar código ARINC 429</button>
+    </div>
+    <div id="envio-msg"></div>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Instrumento</th><th>Valor</th><th>32-bit HEX</th><th>32-bit BIN</th><th>Salidas</th><th>Acción</th></tr>
+      </thead>
+      <tbody id="tabla-envios"></tbody>
+    </table>
+  </div>
+
+  <script>
+    async function cargarTodo() {
+      const [rInst, rEnv] = await Promise.all([fetch('/api/instrumentos'), fetch('/api/envios')]);
+      const insts = await rInst.json();
+      const envs = await rEnv.json();
+      renderInstrumentos(insts);
+      renderEnvios(envs);
+    }
+
+    function renderInstrumentos(insts) {
+      const tbody = document.getElementById('tabla-inst');
+      const sel = document.getElementById('envio-inst');
+      tbody.innerHTML = '';
+      sel.innerHTML = '';
+      for (const i of insts) {
+        const octStr = i.label_octal.toString(8).padStart(3, '0');
+        tbody.innerHTML += `<tr>
+          <td>${i.id}</td><td>${i.nombre}</td><td>${i.minimo}</td><td>${i.maximo}</td><td>${octStr}</td>
+          <td>
+            <button class="secondary" onclick='editarInst(${JSON.stringify(i)})'>Editar</button>
+            <button class="danger" onclick='borrarInst(${i.id})'>Eliminar</button>
+          </td>
+        </tr>`;
+        sel.innerHTML += `<option value="${i.id}">${i.nombre} [${i.minimo} .. ${i.maximo}]</option>`;
+      }
+    }
+
+    function editarInst(i) {
+      document.getElementById('inst-id').value = i.id;
+      document.getElementById('inst-nombre').value = i.nombre;
+      document.getElementById('inst-min').value = i.minimo;
+      document.getElementById('inst-max').value = i.maximo;
+      document.getElementById('inst-label').value = i.label_octal.toString(8);
+    }
+
+    function limpiarFormInst() {
+      document.getElementById('inst-id').value = '';
+      document.getElementById('inst-nombre').value = '';
+      document.getElementById('inst-min').value = '';
+      document.getElementById('inst-max').value = '';
+      document.getElementById('inst-label').value = '203';
+    }
+
+    async function guardarInstrumento() {
+      const id = document.getElementById('inst-id').value;
+      const payload = {
+        nombre: document.getElementById('inst-nombre').value,
+        minimo: document.getElementById('inst-min').value,
+        maximo: document.getElementById('inst-max').value,
+        label_octal: document.getElementById('inst-label').value
+      };
+      const url = id ? `/api/instrumentos/${id}` : '/api/instrumentos';
+      const method = id ? 'PUT' : 'POST';
+      const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+      const data = await res.json();
+      const msg = document.getElementById('inst-msg');
+      if (!res.ok) {
+        msg.innerHTML = `<span class="msg-err">${data.error}</span>`;
+      } else {
+        msg.innerHTML = `<span class="msg-ok">Instrumento guardado.</span>`;
+        limpiarFormInst();
+        cargarTodo();
+      }
+    }
+
+    async function borrarInst(id) {
+      await fetch(`/api/instrumentos/${id}`, { method: 'DELETE' });
+      cargarTodo();
+    }
+
+    async function crearEnvio() {
+      const payload = {
+        instrumento_id: document.getElementById('envio-inst').value,
+        valor: document.getElementById('envio-valor').value,
+        puerto_serie: document.getElementById('envio-puerto').value,
+        baudrate: document.getElementById('envio-baud').value,
+        auricular: document.getElementById('envio-audio').checked
+      };
+      const res = await fetch('/api/envios', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+      const data = await res.json();
+      const msg = document.getElementById('envio-msg');
+      if (!res.ok) {
+        msg.innerHTML = `<span class="msg-err">${data.error}</span>`;
+      } else {
+        msg.innerHTML = `<span class="msg-ok">Generado ${data.arinc.hex} | ${data.serial.detalle} | ${data.auricular.detalle}</span>`;
+        cargarTodo();
+      }
+    }
+
+    async function borrarEnvio(id) {
+      await fetch(`/api/envios/${id}`, { method: 'DELETE' });
+      cargarTodo();
+    }
+
+    function renderEnvios(envs) {
+      const tbody = document.getElementById('tabla-envios');
+      tbody.innerHTML = '';
+      for (const e of envs) {
+        tbody.innerHTML += `<tr>
+          <td>${e.id}</td>
+          <td>${e.instrumento_nombre}</td>
+          <td>${e.valor}</td>
+          <td><code>${e.arinc.hex}</code></td>
+          <td><code style="font-size:11px">${e.arinc.bin}</code></td>
+          <td>Serial: ${e.serial.modo}<br/>Audio: ${e.auricular.ok ? 'OK' : 'Error'}</td>
+          <td><button class="danger" onclick='borrarEnvio(${e.id})'>Eliminar</button></td>
+        </tr>`;
+      }
+    }
+
+    cargarTodo();
+  </script>
+</body>
+</html>
